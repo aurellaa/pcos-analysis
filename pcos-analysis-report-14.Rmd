@@ -1,0 +1,571 @@
+---
+title: "pcos-analysis-report"
+author: "aurellaa"
+date: "2025-03-08"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Introduction
+
+Polycystic ovary syndrome (PCOS) is a common multisystem disorder affecting the endocrine, reproductive, and metabolic systems in women of reproductive age. It is characterized by hyperandrogenism, chronic anovulation, and polycystic ovaries.^1^ Moreover, it is the leading cause of infertility and is associated with a higher risk of developing type 2 diabetes, cardiovascular disease, and mental health disorders such as anxiety and depression.^2^
+
+PCOS affects 8-13% of women in Australia.^3^ However, despite its high prevalence, PCOS remains widely misunderstood and underdiagnosed. Many women experience delays in diagnosis and inadequate medical support, leading to long-term health consequences.^4^
+
+This report conducts statistical analysis to answer these three research questions:
+
+1\. Does BMI Differ Between Women With and Without PCOS?
+
+2\. Are Irregular Periods Associated With Higher PCOS Risk?
+
+3\. Do Hormone Levels Differ Between PCOS and Non-PCOS Women?
+
+The dataset used in this report was obtained from Kaggle and originally published by Prasoon Kottarathil in 2020. It contains physical and clinical parameters relevant to PCOS diagnosis and infertility-related issues, collected from 10 hospitals across Kerala, India. The dataset consists of 541 observations and 45 variables, including PCOS diagnosis, age, BMI, hormone levels, menstrual cycle regularity, and other clinical markers.^5^ For the purposes of this statistical analysis, a subset of 15 variables was selected based on their relevance to the research questions.\
+
+The objective of this report is to help improve early diagnosis, treatment strategies, and screening guidelines for PCOS. Additionally, this report hopes to contribute to better public health awareness about PCOS, helping more women receive timely and effective medical care – ultimately improving their quality of life.
+
+# 2. Data Preparation and Cleaning
+
+## 2.1 Loading Required Packages
+
+Before beginning the analysis, we load all necessary R packages to ensure smooth execution of the code.
+
+```{r packages, echo = TRUE, message = FALSE, warning = FALSE, error = FALSE}
+# loading in the necessary packages
+library(ggplot2)
+library(dplyr)
+library(cowplot)
+library(readxl)
+library(effsize)
+```
+
+## 2.2 Loading the Dataset
+
+```{r dataset, echo = TRUE, message = FALSE, warning = FALSE, error = FALSE}
+# loading in the dataset
+pcos_data <- read_excel("PCOS_data_without_infertility.xlsx", sheet = 2)
+```
+
+## 2.3 Data Cleaning and Recoding
+
+The following outlines the data preparation steps taken to ensure accuracy and readability:
+
+-   The original dataset contains column names with spaces and special characters (e.g., /, ., ()). To prevent coding errors and improve readability, these names are modified by removing spaces and replacing special characters with underscores or meaningful alternatives.
+
+-   Since the original dataset contains 45 variables, we select only 15 variables that are relevant to our research questions. This ensures a more focused and efficient analysis.
+
+-   Certain variables are stored in incorrect formats. These are converted into the appropriate data types for accurate statistical analysis.
+
+-   Any missing values were omitted to prevent errors in analysis.
+
+-   Binary variables were converted into descriptive text for clarity (e.g., 0 = No, 1 = Yes for the PCOS variable).
+
+```{r}
+# removing the spaces from the variable names to prevent coding errors
+colnames(pcos_data) <- gsub(" ", "_", colnames(pcos_data))
+colnames(pcos_data)
+
+```
+
+```{r}
+# only taking a subset of variables
+pcos_data_subset <- pcos_data |>
+  select(`PCOS_(Y/N)`,
+         `Age_(yrs)`,
+         `Weight_(Kg)`,
+         `Height(Cm)`,
+         BMI,
+         `Cycle(R/I)`,
+         `FSH(mIU/mL)`,
+         `LH(mIU/mL)`,
+         `FSH/LH`,
+         `TSH_(mIU/L)`,
+         `AMH(ng/mL)`,
+         `PRL(ng/mL)`,
+         `PRG(ng/mL)`,
+         )
+
+colnames(pcos_data_subset)
+```
+
+```{r}
+
+# recoding variables to suit the analysis
+# renaming some of the column names for convenience purposes
+pcos_df <- pcos_data_subset |> rename(pcos = `PCOS_(Y/N)`,
+                           age = `Age_(yrs)`,
+                           weight = `Weight_(Kg)`,
+                           height = `Height(Cm)`,
+                           bmi = BMI,
+                           cycle = `Cycle(R/I)`,
+                           fsh = `FSH(mIU/mL)`,
+                           lh = `LH(mIU/mL)`,
+                           fsh_lh_ratio = `FSH/LH`,
+                           tsh = `TSH_(mIU/L)`,
+                           amh = `AMH(ng/mL)`,
+                           prl = `PRL(ng/mL)`,
+                           prg = `PRG(ng/mL)`,
+                           )
+glimpse(pcos_df)
+```
+
+```{r}
+# correcting the data types of each variable
+str(pcos_df)
+
+pcos_df <- pcos_df |> 
+  mutate(
+    pcos = as.factor(pcos),  # Convert PCOS (Yes/No) to categorical
+    cycle = as.factor(cycle),  # Regular/Irregular as categorical
+    age = as.numeric(age),
+    weight = as.numeric(weight),
+    height = as.numeric(height),
+    bmi = as.numeric(bmi),
+    fsh = as.numeric(fsh),
+    lh = as.numeric(lh),
+    fsh_lh_ratio = as.numeric(fsh_lh_ratio),
+    tsh = as.numeric(tsh),
+    amh = as.numeric(amh),
+    prl = as.numeric(prl),
+    prg = as.numeric(prg),
+  )
+
+```
+
+```{r}
+# an error was thrown. let's see what's happening...
+
+pcos_df |> filter(is.na(as.numeric(amh)))
+
+# unfortunately there seem to be some typographical errors in the data.
+# for instance, row 307 amh is listed as "a". we should omit that.
+
+```
+
+```{r}
+# checking for any other NAs
+colSums(is.na(pcos_df))
+
+pcos_df <- na.omit(pcos_df)
+```
+
+```{r}
+
+# let's convert the binary variables values into being words instead
+# of numerical values, for clarity.
+
+# changing pcos values such that 0 = No, 1 = Yes
+## checking for any possible data input errors
+table(pcos_df$pcos)
+pcos_df <- pcos_df |>
+  mutate(pcos = ifelse(pcos == 0, "No", "Yes"))
+table(pcos_df$pcos)
+
+# changing cycle values such that 2 = "regular" and 4 = "irregular"
+## checking for any possible data input errors
+table(pcos_df$cycle)
+## it seems that there is mistakenly one "5". we will get rid of this observation
+pcos_df <- pcos_df |> filter(cycle != 5)
+table(pcos_df$cycle)
+
+# pcos_df will now be down to 539 observations
+
+pcos_df <- pcos_df |> 
+  mutate(cycle = ifelse(cycle == 2, "Regular", "Irregular"))
+
+glimpse(pcos_df)
+```
+
+```{r}
+pcos_df <- pcos_df |> 
+  mutate(
+    pcos = as.factor(pcos),  # Convert PCOS (Yes/No) to categorical
+    cycle = as.factor(cycle),  # Regular/Irregular as categorical
+    age = as.numeric(age),
+    weight = as.numeric(weight),
+    height = as.numeric(height),
+    bmi = as.numeric(bmi),
+    fsh = as.numeric(fsh),
+    lh = as.numeric(lh),
+    fsh_lh_ratio = as.numeric(fsh_lh_ratio),
+    tsh = as.numeric(tsh),
+    amh = as.numeric(amh),
+    prl = as.numeric(prl),
+    prg = as.numeric(prg),
+  )
+
+pcos_df # the data is now clean and ready for analysis
+```
+
+# 3. Summary Statistics
+
+Before conducting further analysis, we examine the summary statistics of the cleaned dataset.
+
+```{r sumstats, echo = T}
+# summary stats
+summary(pcos_df)
+```
+
+# 4. Research Question 1: Does BMI Differ Between Women With and Without PCOS?
+
+### 4.1 Setting a Global Theme
+
+```{r}
+#### global theme
+theme_set(
+  theme_classic()
+)
+
+```
+
+### 4.2 Visualising the Distribution of the Data
+
+```{r, message = F, error = F, warning = F}
+#### density plot
+
+ggplot(pcos_df, aes(x=bmi, color = pcos)) +
+  geom_density(lwd = 1) +
+  labs(x = "BMI", y = "Density", title = "BMI Distribution by PCOS Status", color = "PCOS") +
+  scale_color_manual(values = c("No" = "steelblue1", "Yes" = "sienna2"))
+
+```
+
+```{r}
+#### histogram faceted by pcos
+ggplot(pcos_df, aes(x = bmi, fill = pcos)) +
+  geom_histogram(alpha = 0.7, position = "identity", bins = 30) +
+  facet_wrap(~ pcos) +
+  labs(x = "BMI", y = "Count", fill = "PCOS", title = "BMI Distribution by PCOS Status") +
+  scale_fill_manual(values = c("No" = "steelblue1", "Yes" = "sienna2"))
+
+
+```
+
+While the non-PCOS seems to be roughly normally distributed, it seems like the PCOS group could have some skewness.
+
+### 4.3 Checking if the Assumptions for T-Test are Fulfilled
+
+```{r, message = F, error = F, warning = F}
+# might be skewness for pcos group
+# checking for normality or non-normality with the shapiro wilk test
+# if p < 0.05, the group is not normally distributed
+
+
+shapiro.test(pcos_df$bmi[pcos_df$pcos == "No"])   # no pcos group
+# W = 0.99272, p-value = 0.07472
+# it is normally distributed!
+
+shapiro.test(pcos_df$bmi[pcos_df$pcos == "Yes"])  # has pcos group
+# W = 0.9839, p-value = 0.05312
+# this is just barely above 0.05, but n is much larger than 30 so its reasonable for us to do a t-test
+
+
+```
+
+Since the PCOS group may have some skewness but sample size \> 30, we proceed with a t-test.
+
+### 4.4 Conducting a t-test
+
+To examine whether BMI differs between women with and without PCOS, we conduct an independent t-test:
+
+```{r}
+t.test(bmi ~ pcos, data = pcos_df, var.equal = FALSE)
+```
+
+The results indicate that the difference in BMI between the two groups is statistically significant (p \< 0.05). Therefore, we reject the null hypothesis and conclude that BMI is significantly different between women with and without PCOS.
+
+The mean BMI for women with PCOS is 23.75, and for women without PCOS, it's 25.47. This suggests that on average, women with PCOS have a higher BMI.
+
+The 95% confidence interval (-2.48, -0.96) shows that we are 95% confident that the true difference in mean BMI between the two groups falls within this range. Since the confidence interval is entirely negative and does not include zero, we confirm that BMI is higher in the PCOS group.
+
+However, while statistical significance confirms that a difference exists, we must assess whether this difference is meaningful in practice.
+
+### 4.5 Cohen's d Test for Effect Size
+
+To determine the magnitude of the difference, we calculate Cohen’s d:
+
+```{r}
+cohen.d(pcos_df$bmi ~ pcos_df$pcos)
+
+# the effect size is small (but almost moderate)
+```
+
+The effect size (d = -0.431) suggests that the difference in BMI between the two groups is small to moderate.
+
+### 4.6 Visualising the Differences
+
+We create a boxplot to visualize the distribution of BMI across the two groups:
+
+```{r}
+# visualising the difference
+ggplot(pcos_df, aes(x = pcos, y = bmi, fill = pcos)) +
+  geom_boxplot() +
+  labs(title = "BMI Distribution by PCOS Status", x = "PCOS", y = "BMI", fill = "PCOS") +
+  scale_fill_manual(values = c("No" = "steelblue1", "Yes" = "sienna2"))
+# pcos group has a higher median BMI compared to the non-PCOS group.
+# there are outliers in both groups
+
+```
+
+The boxplot confirms that the median BMI is higher in the PCOS group. Additionally, both groups contain outliers.
+
+### 4.7 Conclusion
+
+While women with PCOS tend to have higher BMI compared to those without PCOS, the effect size suggests that the difference, though statistically significant, may have limited practical significance.
+
+# 5. Research Question 2: Are Irregular Periods Associated With Higher PCOS Risk?
+
+Since both variables are categorical, we conduct a chi-square test of independence.
+
+### 5.1 Creating a contingency table
+
+```{r}
+table(pcos_df$pcos, pcos_df$cycle)
+```
+
+The chi-square test assumes that all expected counts are ≥ 5, which we confirm is met in this dataset.
+
+### 5.2 Chi-Square Test
+
+```{r}
+chisq.test(pcos_df$pcos, pcos_df$cycle)
+```
+
+The results indicate a highly significant association between menstrual cycle regularity and PCOS status (χ² = 84.189, df = 1, p \< 2.2e-16). This provides strong evidence that women with irregular periods have a significantly higher likelihood of having PCOS compared to those with regular cycles.
+
+### 5.3 Visualising the Association
+
+We create a bar graph to illustrate the proportion of regular vs. irregular menstrual cycles by PCOS status:
+
+```{r}
+ggplot(pcos_df, aes(x = cycle, fill = pcos)) +
+  geom_bar(position = "fill", color = "black") +
+  labs(x = "Menstrual Cycle Regularity", y = "Proportion", fill = "PCOS",
+       title = "Proportion of Regular vs. Irregular Cycles by PCOS Status") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("No" = "steelblue1", "Yes" = "sienna2"))
+
+```
+
+### 5.4 Conclusion
+
+-   The majority of women with irregular menstrual cycles have PCOS.
+
+-   Most women with regular cycles do not have PCOS, though a small proportion still do.
+
+This analysis confirms a strong association between menstrual cycle irregularity and increased PCOS risk.
+
+# 6. Research Question 3 : Do Hormone Levels Differ Between PCOS and Non-PCOS Women?
+
+### 6.1 Checking Normality of Hormone Levels
+
+We first assess whether hormone levels follow a normal distribution using the Shapiro-Wilk test:
+
+```{r}
+hormones <- c("fsh", "lh", "fsh_lh_ratio", "tsh", "amh", "prl", "prg")
+
+for (hormone in hormones) {
+  print(hormone)
+  print(shapiro.test(pcos_df[[hormone]]))
+}
+```
+
+The results show that all p-values are \< 0.05, indicating that none of the hormone levels are normally distributed. Since normality assumptions are violated, we proceed with a non-parametric test.
+
+### 6.2 Comparing Hormone Levels Using the Mann-Whitney U Test
+
+We use the Mann-Whitney U test (Wilcoxon rank-sum test) to compare hormone levels between women with and without PCOS:
+
+```{r}
+# non-parametric test - the mann whitney u test
+wilcoxon_results <- lapply(hormones, function(hormone) {
+  test <- wilcox.test(pcos_df[[hormone]] ~ pcos_df$pcos)
+  return(data.frame(Hormone = hormone, W = test$statistic, p_value = test$p.value))
+})
+
+wilcoxon_results_df <- do.call(rbind, wilcoxon_results)
+print(wilcoxon_results_df)
+```
+
+The results indicate that FSH, FSH/LH ratio, and AMH show significant differences between groups, while LH, TSH, PRL, and PRG do not.
+
+### 6.3 Effect Size: Cliff’s Delta
+
+To assess the magnitude of these differences, we compute Cliff’s delta for the significant hormones:
+
+```{r}
+significant_hormones <- c("fsh", "fsh_lh_ratio", "amh")
+
+
+# effect size cliffs delta
+cliff.delta(pcos_df$fsh ~ pcos_df$pcos)
+cliff.delta(pcos_df$fsh_lh_ratio ~ pcos_df$pcos)
+cliff.delta(pcos_df$amh ~ pcos_df$pcos)
+```
+
+The results suggest weak effect sizes, indicating that while the differences are statistically significant, they may not be clinically meaningful.
+
+### 6.4 Visualizing Hormone Level Differences
+
+Since hormone levels are in separate columns, we reshape the dataset for visualization:
+
+```{r}
+# reshaping the data for ggplot
+pcos_long <- reshape2::melt(pcos_df, id.vars = "pcos", measure.vars = significant_hormones)
+head(pcos_long)
+```
+
+We then create boxplots to compare hormone levels between groups:
+
+```{r}
+# boxplot
+ggplot(pcos_long, aes(x = pcos, y = value, fill = pcos)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Significant Hormone Levels by PCOS Status",
+       x = "PCOS Status", y = "Hormone Level") +
+  scale_fill_manual(values = c("No" = "steelblue1", "Yes" = "sienna2"))
+```
+
+The boxplots reveal extreme outliers. The presence of extreme outliers is disproportionately stretching the y-axis, causing the boxplots to appear highly compressed. This makes it difficult to visually assess the distribution of hormone levels across groups. Therefore, we remove the outliers for clearer visualization and more reliable interpretation.
+
+### 6.5 Removing Outliers
+
+We define a function to remove values beyond 1.5 times the interquartile range (IQR):
+
+```{r}
+# function for removing outliers
+remove_outliers <- function(x) {
+  q1 <- quantile(x, 0.25, na.rm = TRUE)
+  q3 <- quantile(x, 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+  x[x > (q3 + 1.5 * iqr)] <- NA  # Remove extreme values
+  x[x < (q1 - 1.5 * iqr)] <- NA
+  return(x)
+}
+
+```
+
+We apply this function to the significant hormones:
+
+```{r}
+# applying that function to our significant hormones
+pcos_df$filtered_fsh <- remove_outliers(pcos_df$fsh)
+pcos_df$filtered_fsh_lh_ratio <- remove_outliers(pcos_df$fsh_lh_ratio)
+pcos_df$filtered_amh <- remove_outliers(pcos_df$amh)
+
+glimpse(pcos_df)
+```
+
+We reshape the data again:
+
+```{r}
+pcos_long_reshape <- reshape2::melt(pcos_df, id.vars = "pcos",
+                            measure.vars = c("filtered_fsh", "filtered_fsh_lh_ratio", "filtered_amh"))
+
+head(pcos_long_reshape)
+```
+
+### 6.6 Reassessing the Wilcoxon Test and Effect Sizes
+
+We verify whether the results remain consistent after removing outliers:
+
+```{r}
+# just making sure results of the wilcoxon are similar..
+wilcox.test(pcos_df$filtered_fsh ~ pcos_df$pcos)
+wilcox.test(pcos_df$filtered_fsh_lh_ratio ~ pcos_df$pcos)
+wilcox.test(pcos_df$filtered_amh ~ pcos_df$pcos)
+```
+
+The tests remain statistically significant (p-values \< 0.05).
+
+We also check Cliff’s delta again:
+
+```{r}
+cliff.delta(pcos_df$filtered_fsh ~ pcos_df$pcos)
+cliff.delta(pcos_df$filtered_fsh_lh_ratio ~ pcos_df$pcos)
+cliff.delta(pcos_df$filtered_amh ~ pcos_df$pcos)
+
+```
+
+After removing extreme outliers, the effect size for FSH increased from negligible to small. However, the overall effect sizes remain small, indicating that while the differences are statistically significant, their practical significance may be minimal.
+
+### 6.7 Final Visualization (Outliers Removed)
+
+```{r}
+ggplot(pcos_long_reshape, aes(x = pcos, y = value, fill = pcos)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +  # Hide outliers
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Hormone Levels by PCOS Status (Outliers Removed)",
+       x = "PCOS Status", y = "Hormone Level", fill = "PCOS") +
+  scale_fill_manual(values = c("No" = "steelblue1", "Yes" = "sienna3"))
+```
+
+### 6.8 Conclusion
+
+FSH is lower in women with PCOS compared to those without PCOS.
+
+FSH/LH ratio is lower in women with PCOS.
+
+AMH is higher in women with PCOS.
+
+However small-to-negligible effect sizes suggest that these differences may have limited clinical relevance.
+
+# 7. Discussion & Conclusions
+
+From the statistical tests conducted, it may be concluded that:
+
+BMI is significantly higher in PCOS individuals (p \< 0.05), however the effect size is small to moderate. Higher BMI in PCOS patients is consistent with established research.^6^ Studies indicate that women with PCOS have a greater risk of overweight, obesity, and central obesity, emphasizing the importance of weight management as part of clinical treatment.^7^ Furthermore, BMI management in PCOS patients enhances glucose metabolism, thus decreasing the risk for developing gestational diabetes during pregnancy.^8^
+
+However, it should be noted that PCOS cases in which the patient's BMI is within the normal range is also prevalent (although lower) in clinical practice.^9^
+
+Irregular periods are strongly associated with PCOS (p \< 0.001). It was found that 75-85% of women with PCOS experience oligomenorrhea (infrequent periods) or amenorrhea (absent periods).^10^
+
+According to existing literature, this irregularity is mainly due to excess androgen levels, which disrupt normal ovulation. This excess androgen interferes with ovulation, preventing eggs from developing and being regularly released from follicles.^11^
+
+In addition, PCOS is characterised by polycystic ovaries, where multiple small, fluid-filled follicles containing immature eggs accumulate along the ovarian edges. These ovaries may not function properly, further contributing to menstrual irregularities.^12^
+
+Visualisation of the data also showed that not all PCOS cases have irregular cycles, which is also consistent with current statistics.^13^
+
+Some hormone levels, including FSH, FSH/LH ratio, and AMH, significantly differed between groups. This is consistent with prior medical literature:
+
+-   FSH levels tend to be lower in PCOS individuals.^14^
+
+-   PCOS is typically associated with a low FSH and high LH, leading to a decreased FSH/LH ratio.^15^
+
+-    AMH levels are higher in PCOS women, as they have a greater number of antral follicles.^16^
+
+Despite the statistical significance, however, the effect sizes were small, suggesting limited clinical impact. This aligns with research indicating that while hormonal differences are associated with PCOS, their variability within populations may reduce their effectiveness as standalone diagnostic markers.^17^
+
+Interestingly, LH levels did not significantly differ between PCOS and non-PCOS individuals. This contrasts with prior research stating that PCOS involves altered gonadotropin regulation, leading to a relative increase in LH compared to FSH.^18^ This could be explained by hormone fluctuations across the menstrual cycle, which were not accounted for in this dataset.
+
+While this study provides meaningful insights, several limitations must be acknowledged. Firstly, the dataset was relatively small, with only 539 observations. Moreover, the data was only collected from hospitals in Kerala, India – thus introducing geographical bias. Hormone fluctuations across different phases of the menstrual cycle were also not accounted for in the dataset. Finally, PCOS is a heterogenous condition, and the dataset used may not fully capture all phenotypic variations.
+
+In the future, research should analyze larger, more diverse datasets, incorporate additional clinical factors, such as insulin resistance and metabolic markers, to enhance PCOS classification, and investigate hormonal patterns across different menstrual phases for a better understanding.
+
+# 8. Bibliography
+
+1.  National Center for Biotechnology Information. Polycystic Ovary Syndrome (PCOS). [Internet]. Available from: <https://www.ncbi.nlm.nih.gov/books/NBK459251/>
+2.  Dennett CC, Simon J. The role of polycystic ovary syndrome in reproductive and metabolic health: overview and approaches for treatment. Diabetes Spectr. 2015 May;28(2):116-20. doi: 10.2337/diaspect.28.2.116. PMID: 25987810; PMCID: PMC4433074.
+3.  The Medical Journal of Australia. Australian-led PCOS guideline an international first. [Internet]. 2018. Available from: <https://www.mja.com.au/journal/2018/australian-led-pcos-guideline-international-first>
+4.  Gibson-Helm M, Teede H, Dunaif A, Dokras A. Delayed diagnosis and a lack of information associated with dissatisfaction in women with polycystic ovary syndrome. J Clin Endocrinol Metab. 2017 Feb 1;102(2):604-612. doi: 10.1210/jc.2016-2963. PMID: 27906550; PMCID: PMC6283441.
+5.  Kottarathil P. Polycystic ovary syndrome (PCOS) [dataset]. Kaggle. 2020. Available from: <https://www.kaggle.com/prasoonkottarathil/polycystic-ovary-syndrome-pcos>
+6.  Barber TM, McCarthy MI, Wass JA, Franks S. Obesity and polycystic ovary syndrome: implications for pathogenesis and treatment. J Clin Endocrinol Metab. 2006;91(1):7-13. PMCID: PMC2744370. Available from: <https://pmc.ncbi.nlm.nih.gov/articles/PMC2744370/>
+7.  Lim SS, Davies MJ, Norman RJ, Moran LJ. Overweight, obesity and central obesity in women with polycystic ovary syndrome: a systematic review and meta-analysis. Hum Reprod Update. 2012;18(6):618–637. doi: 10.1093/humupd/dms030.
+8.  Ma N, Zhou J, Lu W. The normal body mass index (BMI) of women with polycystic ovary syndrome (PCOS) was associated with IVF/ICSI assisted conception outcomes. Clin Exp Obstet Gynecol. 2023;50(11):228. doi: 10.31083/j.ceog5011228.
+9.  National Library of Medicine. PCOS and obesity. [Internet]. Available from: <https://pmc.ncbi.nlm.nih.gov/articles/PMC10986768/>
+10. Harris HR, Babic A, Webb PM, Nagle CM, Jordan SJ, Risch HA, et al. Polycystic ovary syndrome, oligomenorrhea, and risk of ovarian cancer histotypes: Evidence from the Ovarian Cancer Association Consortium. Cancer Epidemiol Biomarkers Prev. 2018 Feb;27(2):174-182. doi: 10.1158/1055-9965.EPI-17-0655. PMID: 29141849; PMCID: PMC5877463.
+11. Cleveland Clinic. Polycystic ovary syndrome (PCOS). [Internet]. Available from: <https://my.clevelandclinic.org/health/diseases/8316-polycystic-ovary-syndrome-pcos>
+12. Mayo Clinic. Polycystic ovary syndrome (PCOS) - Symptoms & causes. 2023. Available from: <https://www.mayoclinic.org/diseases-conditions/pcos/symptoms-causes/syc-20353439>
+13. Carmina E, Lobo RA. Do hyperandrogenic women with normal menses have polycystic ovary syndrome? Fertil Steril. 1999 Feb;71(2):319-22. doi: 10.1016/s0015-0282(98)00455-5. PMID: 9988405.
+14. Emanuel RHK, Roberts J, Docherty PD, Lunt H, Campbell RE, Möller K. A review of the hormones involved in the endocrine dysfunctions of polycystic ovary syndrome and their interactions. Front Endocrinol (Lausanne). 2022 Nov 15;13:1017468. doi: 10.3389/fendo.2022.1017468. PMID: 36457554; PMCID: PMC9705998.
+15. Emanuel RHK, Roberts J, Docherty PD, Lunt H, Campbell RE, Möller K. A review of the hormones involved in the endocrine dysfunctions of polycystic ovary syndrome and their interactions. Front Endocrinol (Lausanne). 2022 Nov 15;13:1017468. doi: 10.3389/fendo.2022.1017468. PMID: 36457554; PMCID: PMC9705998.
+16. National Library of Medicine. Anti-Müllerian hormone and PCOS. [Internet]. Available from: <https://pmc.ncbi.nlm.nih.gov/articles/PMC8006968/>
+17. Skiba MA, Islam RM, Bell RJ, Davis SR. Understanding variation in prevalence estimates of polycystic ovary syndrome: A systematic review and meta-analysis. Hum Reprod Update. 2018;24(6):694–709. doi: 10.1093/humupd/dmy022.
+18. Taylor AE, McCourt B, Martin KA, Anderson EJ, Adams JM, Schoenfeld D, Hall JE. Determinants of abnormal gonadotropin secretion in clinically defined women with polycystic ovary syndrome. J Clin Endocrinol Metab. 1997 Jul;82(7):2248-56. doi: 10.1210/jcem.82.7.4105. PMID: 9215302.
